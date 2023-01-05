@@ -31,8 +31,6 @@ def disarm():
 def takeoff():
     return make_in(0xd9, struct.pack("<H", 1))
 
-print(takeoff())
-
 def land():
     return make_in(0xd9, struct.pack("<H", 2))
 
@@ -43,6 +41,8 @@ def button_pressed(btn):
     global last_button
     last_button = str(btn.name)
 
+print('------')
+
 with Telnet('192.168.4.1', 23) as tn, Xbox360Controller() as controller:
 # with Xbox360Controller() as controller:
     controller.button_a.when_pressed = button_pressed
@@ -51,7 +51,6 @@ with Telnet('192.168.4.1', 23) as tn, Xbox360Controller() as controller:
     controller.button_y.when_pressed = button_pressed
 
     armed = False
-    throttle=1000
 
     try:
         while True:
@@ -61,19 +60,16 @@ with Telnet('192.168.4.1', 23) as tn, Xbox360Controller() as controller:
                 armed = False
             elif last_button == "button_b":
                 armed = True
-                throttle = 1000
             elif last_button == "button_x" and not armed:
                 print('TAKEOFF START                                                                   ', end='\n', flush=True)
                 tn.write(box_arm())
                 tn.write(takeoff())
-                time.sleep(2)
+                time.sleep(1)
                 armed = True
-                throttle = 1600
             elif last_button == "button_y" and armed:
                 print('LAND START                                                                      ', end='\n', flush=True)
                 tn.write(land())
-                time.sleep(2)
-                throttle=1000
+                time.sleep(5)
                 armed = False
             last_button = None
 
@@ -82,18 +78,20 @@ with Telnet('192.168.4.1', 23) as tn, Xbox360Controller() as controller:
                 print('DISARMED                                                                        ', end='\n', flush=True)
                 continue
 
-            throttle += controller.axis_l.y * -10 # moving joystick up makes y negative
-            if throttle < 1000:
-                throttle = 1000
-            elif throttle > 2100:
-                throttle = 2100
+            throttle = 1550
+            ly = -controller.axis_l.y # minus because joystick up is -ve
+            if ly > 0:
+                throttle += ly * 200
+            else:
+                # drone drops fast if throttle goes too low
+                throttle += ly * 100
 
             yaw = 1500 + int(controller.axis_l.x * 300)
-            pitch = 1540 + int(controller.axis_r.y * -300) # moving joystick up makes y negative
-            roll = 1500 + int(controller.axis_r.x * 300)
+            pitch = 1540 + int(controller.axis_r.y * -200) # moving joystick up makes y negative
+            roll = 1500 + int(controller.axis_r.x * 200)
 
             print('throttle: {:4.2f}    roll: {:4}    pitch {:4}    yaw {:4}'.format(throttle, roll, pitch, yaw), end='\n', flush=True)
-            tn.write(msp_set_raw_rc(roll=roll, pitch=pitch, throttle=int(throttle), yaw=yaw))
+            tn.write(msp_set_raw_rc(roll=roll, pitch=pitch, throttle=throttle, yaw=yaw))
 
     except KeyboardInterrupt:
         pass
