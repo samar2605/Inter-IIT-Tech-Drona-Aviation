@@ -17,7 +17,9 @@ def make_in(command: int, byte_arr: bytes):
 
 def msp_set_raw_rc(roll=1500, pitch=1500, throttle=1000, yaw=1500, aux1=2100, aux2=900, aux3=1500, aux4=1500):
     payload = struct.pack("<8H", roll, pitch, throttle, yaw, aux1, aux2, aux3, aux4)
-    return make_in(0xc8, payload)
+    msg = make_in(0xc8, payload)
+    print(msg)
+    return msg
 
 def arm():
     return msp_set_raw_rc(throttle=1000, aux4=1500)
