@@ -1,5 +1,5 @@
 import struct
-from telnetlib import Telnet
+import socket
 import time
 
 def make_in(command: int, byte_arr: bytes):
@@ -27,9 +27,8 @@ MAG_CALIB = make_in(0xce, b"")
 
 class Command:
     def __init__(self, ip_addr):
-        # telnet object
-        # FIXME: change sender to raw socket ??
-        self.sender = Telnet(ip_addr, 23)
+        self.sender = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sender.connect((ip_addr, 23))
 
         self.throttle = 1500
         self.yaw = 1500
@@ -169,7 +168,7 @@ class Command:
     def send_msg(self, msg):
         print('------')
         print(self.make_msg())
-        self.sender.write(msg)
+        self.sender.send(msg)
 
 if __name__ == "__main__":
     from xbox360controller import Xbox360Controller
