@@ -126,5 +126,6 @@ while True:
     # Restricting FPS
     time.sleep(0.010)
 cv2.imwrite('tracked.jpg',track_img)
+dc.release()
 cv2.destroyAllWindows()
 #vs.stop()
