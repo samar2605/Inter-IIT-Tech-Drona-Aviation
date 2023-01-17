@@ -2,6 +2,22 @@ import struct
 import socket
 import time
 
+def parse_out(msg):
+    if msg[:3] != b'$M>':
+        raise ValueError("Invalid message header/direction")
+    length, command = struct.unpack("<BB", msg[3:5])
+    if len(msg[3:-1]) < length:
+        raise ValueError("Too short")
+        return
+    payload = msg[5:5+length]
+    crc = length ^ command
+    for c in payload:
+        crc ^= c
+    if crc != msg[5+length]:
+        raise ValueError("crc mismatch")
+        return
+    return command, payload
+
 def make_in(command: int, byte_arr: bytes):
 
     cmd = struct.pack(f"<cBB{len(byte_arr)}s", b'<', len(byte_arr), command, byte_arr)
@@ -22,13 +38,12 @@ def msp_set_command(command):
     return make_in(0xd9, payload)
 
 ACC_CALIB = make_in(0xcd, b"")
-
 MAG_CALIB = make_in(0xce, b"")
 
 class Command:
     def __init__(self, ip_addr):
-        self.sender = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sender.connect((ip_addr, 23))
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.connect((ip_addr, 23))
 
         self.throttle = 1500
         self.yaw = 1500
@@ -50,7 +65,7 @@ class Command:
         self.cmd = 0
 
     def __del__(self):
-        self.sender.close()
+        self.socket.close()
 
     # Xbox 360 controller support
     def add_controller(self, controller):
@@ -91,12 +106,22 @@ class Command:
         self.aux4 = 1500
         self.send()
 
-    def set_raw_vals(self, throttle=1500, yaw=1500, pitch=1500, roll=1500):
-        self.throttle = throttle
-        self.yaw = yaw
-        self.pitch = pitch
-        self.roll = roll
+    def set_attitude(self, throttle=None, yaw=None, pitch=None, roll=None):
+        self.throttle = throttle or self.throttle
+        self.yaw = yaw or self.yaw
+        self.pitch = pitch or self.pitch
+        self.roll = roll or self.roll
         self.send()
+
+    def get_raw_vals(self):
+        MSP_RAW_IMU = 0x66
+        data = self.get_in_msg(MSP_RAW_IMU, 18)
+        arr = struct.unpack("<9h", data)
+        return {
+            "acc": arr[:3],
+            "gyro": arr[3:6],
+            "mag": arr[6:]
+        }
 
     def takeoff(self):
         if self.is_armed():
@@ -122,8 +147,8 @@ class Command:
     def calib(self):
         if self.is_armed():
             return
-        self.send_msg(ACC_CALIB)
-        self.send_msg(MAG_CALIB)
+        self.send_out_msg(ACC_CALIB)
+        self.send_out_msg(MAG_CALIB)
 
     def make_msg(self):
         if self.cmd == 0:
@@ -140,6 +165,10 @@ class Command:
             self.takeoff()
         elif button.name == "button_y":
             self.land()
+        elif button.name == "button_mode":
+            self.calib()
+        else:
+            print(button.name)
 
     def axis_handler(self, axis):
         # x and y are in [-1.0, 1.0]
@@ -163,12 +192,34 @@ class Command:
     def send(self):
         if self.is_armed() and self.controller is not None:
             self.get_controller_axes()
-        self.send_msg(self.make_msg())
+        self.send_out_msg(self.make_msg())
+
+    def send_out_msg(self, msg):
+        self.send_msg(msg)
+        self.get_msg(0)
 
     def send_msg(self, msg):
-        print('------')
-        print(self.make_msg())
-        self.sender.send(msg)
+        # print('------')
+        # print(self.make_msg())
+        self.socket.send(msg)
+
+    def get_msg(self, payload_len):
+        # 2 byte header
+        # 1 byte dir
+        # 1 byte cmd
+        # 1 byte length
+        # length bytes payload
+        # 1 byte crc
+        print("reading")
+        msg = self.socket.recv(6 + payload_len, socket.MSG_WAITALL)
+        print("read")
+        return parse_out(msg)
+
+    def get_in_msg(self, cmd, payload_len):
+        msg = make_in(cmd, b"")
+        self.send_msg(msg)
+        _, payload = self.get_msg(payload_len)
+        return payload
 
 if __name__ == "__main__":
     from xbox360controller import Xbox360Controller
@@ -179,9 +230,15 @@ if __name__ == "__main__":
         command.disarm()
         command.calib()
 
+
         try:
+            i=0
             while True:
                 time.sleep(0.1)
+                if i % 10 == 0:
+                    print(command.get_raw_vals())
+                    i = 0
+                i += 1
                 command.send()
         except KeyboardInterrupt:
             try:
