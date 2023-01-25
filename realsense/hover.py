@@ -8,11 +8,17 @@ from realsense_depth import *
 from threading import Thread
 from utlities import *
 from control_class import *
-import math
+from math import sqrt
 
 WIDTH = 1280
 HEIGHT = 720
 
+def drone_pose(frame ,matrix_coefficients, distortion_coefficients,id_no):
+    
+    MARKER_SIZE = 0.056
+    rvec, tvec, markerPoints = cv2.aruco.estimatePoseSingleMarkers(corners[id_no], MARKER_SIZE, matrix_coefficients,distortion_coefficients)
+    #frame = aruco_display(frame, corners[i]) 
+    return frame,tvec[0][0][0],tvec[0][0][1],tvec[0][0][2]
 
 # defining an empty custom dictionary 
 # # defining an empty custom dictionary 
@@ -33,7 +39,11 @@ mybits = np.array([[0,0,1,0],[1,0,1,0],[0,0,0,0],[1,1,1,1]], dtype = np.uint8)
 arucoDict.bytesList[4] = cv2.aruco.Dictionary_getByteListFromBits(mybits)
 
 arucoParams = aruco.DetectorParameters_create()
-
+calibration_matrix_path = "calibration_matrix.npy"
+distortion_coefficients_path = "distortion_coefficients.npy"
+    
+k = np.load(calibration_matrix_path)
+d = np.load(distortion_coefficients_path)
 # initialize the video stream and allow the camera sensor to warm up
 print("[INFO] starting video stream...")
 
@@ -53,13 +63,11 @@ eps = 0.1
 #desired_pos = np.array([424,240,1.6])
 desired_depth = 1.6
 
-Kp = 30
-Ki = 1
-Kd = 5
+
 
 Kp_T = 30
-Ki_T = 1
-Kd_T = 5
+Ki_T = 10
+Kd_T = 6
 
 I_P = 0
 I_T = 0
@@ -69,13 +77,13 @@ e_P =0
 e_R = 0
 e_T = 0
 
-Kp_R = 1
-Ki_R = 0
-Kd_R = 0
+Kp_R = 2
+Ki_R = 0.1
+Kd_R = 3
 
-Kp_P = 1
-Ki_P = 0
-Kd_P = 0
+Kp_P = 2
+Ki_P = 0.1
+Kd_P = 3
 
 command = Command("192.168.4.1")
 for i in range(10):
@@ -85,11 +93,12 @@ for i in range(10):
 #     command.arm()
 #     time.sleep(0.1)
 command.takeoff()
-for i in range(20):
+for i in range(10):
     command.boxarm()
+    print('box arm')
     time.sleep(0.1)
 
-
+#desired_pos = np.array([420,230,desired_depth])
 command.pitch = 1500
 command.roll = 1500
 command.throttle = 1500
@@ -111,6 +120,7 @@ try:
                         print('error')
                     if ids[i] == 0:
                         detected_markers,xc,yc = aruco_display(color_frame,corners[i])
+                        frame,x,y,z = drone_pose(color_frame,k,d,i)
                     #cv2.imwrite('det.jpg',  detected_markers)
                     num_not_detected = 0
         else :
@@ -124,28 +134,32 @@ try:
             time.sleep(0.1)
             continue
         
-        if first_time:
-            desired_pos = np.array([xc,yc,desired_depth])
-            first_time = False
             
-        if not first_time:
+        if first_time:
+            desired_pos = np.array([x,y,desired_depth])
+            first_time = False
+        else:
             depth = dc.get_depth(xc,yc)
-            curr_pos = np.array([xc,yc,depth])
-            print('depth = ',depth)
+            if( depth**2 > x**2 + y**2):
+                z = sqrt(depth**2 - (x**2 + y**2))
+            else :
+                print('depth error')
+            curr_pos = np.array([x,y,z])
+            #print('depth = ',depth)
         
-            if(np.linalg.norm(desired_pos-curr_pos) < eps):
+            if(np.linalg.norm(desired_pos - curr_pos) < eps):
                 print('Reached Correct Depth')
                 
-                for t in range(50):
+                # for t in range(50):
 
-                    command.boxarm()
-                    ret, color_frame = dc.get_frame()
-                    cv2.imshow('Frame',color_frame)        
-                    time.sleep(0.1)
-                #cv2.destroyAllWindows()
-                command.land()
-                print('Landing')
-                break
+                #     command.boxarm()
+                #     ret, color_frame = dc.get_frame()
+                #     cv2.imshow('Frame',color_frame)        
+                #     time.sleep(0.1)
+                # #cv2.destroyAllWindows()
+                # command.land()
+                # print('Landing')
+                # break
             print('desired pos : ',desired_pos)
             print('curr_pos :', curr_pos )
             curr_time = time.time()
@@ -158,7 +172,7 @@ try:
             print('throttle')
             correction_z,I_T,e_T = PID(Kp_T,Ki_T,Kd_T,curr_pos[2],desired_pos[2],e_T,I_T,curr_time-prev_time)
 
-  
+
             command.pitch += int(correction_x)
             command.roll += int(correction_y)
             command.throttle += int(correction_z)
@@ -177,7 +191,7 @@ try:
         curr_time = time.time()
         fps = 1/(curr_time-prev_time)
         prev_time = curr_time
-        #print('fps = ',fps)
+        print('fps = ',fps)
         # Restricting FPS
     #time.sleep(0.010)
 
