@@ -39,6 +39,7 @@ mybits = np.array([[0,0,1,0],[1,0,1,0],[0,0,0,0],[1,1,1,1]], dtype = np.uint8)
 arucoDict.bytesList[4] = cv2.aruco.Dictionary_getByteListFromBits(mybits)
 
 arucoParams = aruco.DetectorParameters_create()
+#arucoParams.useAruco3Detection = True
 calibration_matrix_path = "calibration_matrix.npy"
 distortion_coefficients_path = "distortion_coefficients.npy"
     
@@ -65,9 +66,9 @@ desired_depth = 1.6
 
 
 
-Kp_T = 30
-Ki_T = 10
-Kd_T = 6
+Kp_T = 25
+Ki_T = 2
+Kd_T = 0
 
 I_P = 0
 I_T = 0
@@ -77,13 +78,13 @@ e_P =0
 e_R = 0
 e_T = 0
 
-Kp_R = 2
-Ki_R = 0.1
-Kd_R = 3
+Kp_R = 8
+Ki_R = 2
+Kd_R = 0
 
-Kp_P = 2
-Ki_P = 0.1
-Kd_P = 3
+Kp_P = 8
+Ki_P = 2
+Kd_P = 0
 
 command = Command("192.168.4.1")
 for i in range(10):
@@ -93,17 +94,19 @@ for i in range(10):
 #     command.arm()
 #     time.sleep(0.1)
 command.takeoff()
-for i in range(10):
-    command.boxarm()
-    print('box arm')
-    time.sleep(0.1)
+# for i in range(20):
+#     command.boxarm()
+#     print('box arm')
+#     time.sleep(0.1)
+time.sleep(1)
 
 #desired_pos = np.array([420,230,desired_depth])
-command.pitch = 1500
-command.roll = 1500
-command.throttle = 1500
+mean_roll =  1530
+mean_pitch = 1475
+mean_throttle = 1475
 
 prev_time = time.time()
+print('starting off ')
 try:
     while True:
 
@@ -140,11 +143,11 @@ try:
             first_time = False
         else:
             depth = dc.get_depth(xc,yc)
-            if( depth**2 > x**2 + y**2):
-                z = sqrt(depth**2 - (x**2 + y**2))
-            else :
-                print('depth error')
-            curr_pos = np.array([x,y,z])
+            # if( depth**2 > x**2 + y**2):
+            #     z = sqrt(depth**2 - (x**2 + y**2))
+            # else :
+            #     print('depth error')
+            curr_pos = np.array([x,y,depth])
             #print('depth = ',depth)
         
             if(np.linalg.norm(desired_pos - curr_pos) < eps):
@@ -173,9 +176,12 @@ try:
             correction_z,I_T,e_T = PID(Kp_T,Ki_T,Kd_T,curr_pos[2],desired_pos[2],e_T,I_T,curr_time-prev_time)
 
 
-            command.pitch += int(correction_x)
-            command.roll += int(correction_y)
-            command.throttle += int(correction_z)
+            # command.pitch -= int(correction_x)
+            # command.roll += int(correction_y)
+            # command.throttle -= int(correction_z)
+            command.pitch = mean_pitch - int(correction_x)
+            command.roll = mean_roll - int(correction_y) 
+            command.throttle = mean_throttle - int(correction_z)
             command.throttle = max(900,min(command.throttle,2100))
             command.pitch = max(900,min(command.pitch,2100))
             command.roll = max(900,min(command.roll,2100))
@@ -196,6 +202,8 @@ try:
     #time.sleep(0.010)
 
 except KeyboardInterrupt:
+    command.land()
+except:
     command.land()
 
     

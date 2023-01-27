@@ -35,7 +35,7 @@ def aruco_display(frame,corners):
 
 
 def PID (kp,ki,kd,PV,SP,e_prev,I,dt):
-    e = SP - PV
+    e = SP -PV
     P = kp*e
     I += ki*(e)*dt
     if dt != 0:
@@ -44,6 +44,7 @@ def PID (kp,ki,kd,PV,SP,e_prev,I,dt):
         D =0
     
     correction = P+I+D
+    print(e)
     print(P,I,D)
     
     return correction,I,e

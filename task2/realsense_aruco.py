@@ -12,7 +12,7 @@ WIDTH = 1280
 HEIGHT = 720
 
 
-def aruco_display(corners, ids, rejected, color_frame,tracking_frame):
+def aruco_display(corners, ids, color_frame):
     # verify *at least* one ArUco marker was detected
     cX = 0
     cY = 0
@@ -50,11 +50,11 @@ def aruco_display(corners, ids, rejected, color_frame,tracking_frame):
             cX = int((topLeft[0] + bottomRight[0]) / 2.0)
             cY = int((topLeft[1] + bottomRight[1]) / 2.0)
             cv2.circle(color_frame, (cX, cY), 1, (0, 0, 255), -1)
-            cv2.circle(tracking_frame, (cX, cY), 1, (0, 0, 255), -1)
+            #cv2.circle(tracking_frame, (cX, cY), 1, (0, 0, 255), -1)
             # draw the ArUco marker ID on the frame
             cv2.putText(color_frame, str(markerID),(topLeft[0], topLeft[1] - 15),cv2.FONT_HERSHEY_SIMPLEX,0.5, (0, 255, 0), 2)
             print("[Inference] ArUco marker ID: {}".format(markerID))	
-    return (color_frame,tracking_frame,cX,cY)
+    return (color_frame,cX,cY)
 
 
 # defining an empty custom dictionary 
@@ -90,11 +90,11 @@ while True:
     #frame = vs.read()
     #print('test')
     ret, depth_frame, color_frame = dc.get_frame()
-    if first_time:
-        track_img = color_frame
-        track_img = 255 + 0*track_img
+    # if first_time:
+    #     track_img = color_frame
+    #     track_img = 255 + 0*track_img
         
-        first_time = False
+    #     first_time = False
     #cv2.imshow("Tracking Frame p", track_img)
     #frame = imutils.resize(frame, width=720,height = 480)
     # detect ArUco markers in the input frame
@@ -109,10 +109,10 @@ while True:
     # cv2.imshow("Frame",frame)
     x_c , y_c = 100,100
     # show the output frame
-    detected_markers,track_img,x_c,y_c = aruco_display(corners, ids, rejected, color_frame,track_img)
+    detected_markers,x_c,y_c = aruco_display(corners, ids, color_frame)
     cv2.imshow("Frame", detected_markers)
-    cv2.imshow("Tracking Frame", track_img)
-    depth = depth_frame[y_c,x_c]
+    #cv2.imshow("Tracking Frame", track_img)
+    depth = dc.get_depth(x_c,y_c)
     print(depth)
     key = cv2.waitKey(1) & 0xFF
     # if the `q` key was pressed, break from the loop
@@ -124,7 +124,7 @@ while True:
     print('fps = ',fps)
 
     # Restricting FPS
-    time.sleep(0.010)
+    time.sleep(0.01)
 cv2.imwrite('tracked.jpg',track_img)
 dc.release()
 cv2.destroyAllWindows()
