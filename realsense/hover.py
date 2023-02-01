@@ -98,12 +98,12 @@ command.takeoff()
 #     command.boxarm()
 #     print('box arm')
 #     time.sleep(0.1)
-time.sleep(1)
+time.sleep(0.1)
 
 #desired_pos = np.array([420,230,desired_depth])
-mean_roll =  1530
-mean_pitch = 1475
-mean_throttle = 1475
+mean_roll =  1517
+mean_pitch = 1482
+mean_throttle = 1470
 
 prev_time = time.time()
 print('starting off ')
@@ -179,9 +179,9 @@ try:
             # command.pitch -= int(correction_x)
             # command.roll += int(correction_y)
             # command.throttle -= int(correction_z)
-            command.pitch = mean_pitch - int(correction_x)
-            command.roll = mean_roll - int(correction_y) 
-            command.throttle = mean_throttle - int(correction_z)
+            command.pitch = mean_pitch + int(correction_x)
+            command.roll = mean_roll + int(correction_y) 
+            command.throttle = mean_throttle + int(correction_z)
             command.throttle = max(900,min(command.throttle,2100))
             command.pitch = max(900,min(command.pitch,2100))
             command.roll = max(900,min(command.roll,2100))
@@ -202,8 +202,10 @@ try:
     #time.sleep(0.010)
 
 except KeyboardInterrupt:
+    command.boxarm()
     command.land()
 except:
+    command.boxarm()
     command.land()
 
     
