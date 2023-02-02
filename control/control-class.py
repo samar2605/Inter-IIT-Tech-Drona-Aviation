@@ -2,46 +2,57 @@ import struct
 import socket
 import time
 
+# parses an MSP packet from the drone
+# returns a tuple of (command, payload)
 def parse_out(msg):
     if msg[:3] != b'$M>':
         raise ValueError("Invalid message header/direction")
+
     length, command = struct.unpack("<BB", msg[3:5])
-    if len(msg[3:-1]) < length:
-        raise ValueError("Too short")
-        return
+    if len(msg[3:-1]) != length:
+        raise ValueError("Wrong packet length")
+
     payload = msg[5:5+length]
+
+    # verify crc
+    # crc is xor of length, command, and each byte in payload
     crc = length ^ command
     for c in payload:
         crc ^= c
-    if crc != msg[5+length]:
-        raise ValueError("crc mismatch")
-        return
+    if crc != msg[5+length]: # crc is last byte, after 3 header bytes, length, command, and payload
+        raise ValueError("Mismatched crc")
+
     return command, payload
 
+# builds an MSP packet to send to the drone, given a command and payload
 def make_in(command: int, byte_arr: bytes):
 
     cmd = struct.pack(f"<cBB{len(byte_arr)}s", b'<', len(byte_arr), command, byte_arr)
 
+    # calculate crc
     crc = 0
     for c in cmd[1:]:
         crc ^= c
     crcb = bytes([crc])
     return b"$M" + cmd + crcb
-    pass
 
+# builds an MSP_SET_RAW_RC packet
 def msp_set_raw_rc(roll=1500, pitch=1500, throttle=1000, yaw=1500, aux1=2100, aux2=900, aux3=1500, aux4=1500):
     payload = struct.pack("<8H", roll, pitch, throttle, yaw, aux1, aux2, aux3, aux4)
     return make_in(0xc8, payload)
 
+# builds an MSP_SET_COMMAND packet
 def msp_set_command(command):
     payload = struct.pack("<H", command)
     return make_in(0xd9, payload)
 
+# MSP_ACC_CALIBRATION and MSP_MAG_CALIBRATION
 ACC_CALIB = make_in(0xcd, b"")
 MAG_CALIB = make_in(0xce, b"")
 
 class Command:
     def __init__(self, ip_addr):
+        # connect to drone
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.connect((ip_addr, 23))
 
@@ -56,31 +67,41 @@ class Command:
         self.aux3 = 1500
         self.aux4 = 900
 
-        self.lastButton = None
+        # Xbox controller
         self.controller = None
+        self.lastButton = None
 
         # if zero, command is of type MSP_SET_RAW_RC
         # if non-zero, self.cmd is the payload for MSP_SET_COMMAND
-        # 1 for takeoff, 2 for land
+        #   1 is takeoff, 2 is land
         self.cmd = 0
 
     def __del__(self):
+        # disconnect from drone when object is destroyed
         self.socket.close()
 
-    # Xbox 360 controller support
-    def add_controller(self, controller):
-        self.controller = controller
-        # for axis in controller.axes:
-            # axis.when_moved = lambda axis : (
-                # self.axis_handler(axis)
-            # )
-        for button in controller.buttons:
-            button.when_pressed = lambda btn : (
-                self.button_handler(btn)
-            )
-
     def is_armed(self):
-        return 1300 < self.aux4 < 1700
+        return self.cmd == 0 and 1300 < self.aux4 < 1700
+
+    # ------------------- MSP commands -------------------
+
+    def get_raw_vals(self):
+        MSP_RAW_IMU = 0x66
+        data = self.get_in_msg(MSP_RAW_IMU, 18)
+        arr = struct.unpack("<9h", data)
+        return {
+            "acc": arr[:3],
+            "gyro": arr[3:6],
+            "mag": arr[6:]
+        }
+
+    def set_attitude(self, throttle=None, yaw=None, pitch=None, roll=None):
+        self.cmd = 0
+        self.throttle = throttle or self.throttle
+        self.yaw = yaw or self.yaw
+        self.pitch = pitch or self.pitch
+        self.roll = roll or self.roll
+        self.send()
 
     def disarm(self):
         self.cmd = 0
@@ -106,26 +127,10 @@ class Command:
         self.aux4 = 1500
         self.send()
 
-    def set_attitude(self, throttle=None, yaw=None, pitch=None, roll=None):
-        self.throttle = throttle or self.throttle
-        self.yaw = yaw or self.yaw
-        self.pitch = pitch or self.pitch
-        self.roll = roll or self.roll
-        self.send()
-
-    def get_raw_vals(self):
-        MSP_RAW_IMU = 0x66
-        data = self.get_in_msg(MSP_RAW_IMU, 18)
-        arr = struct.unpack("<9h", data)
-        return {
-            "acc": arr[:3],
-            "gyro": arr[3:6],
-            "mag": arr[6:]
-        }
-
+    # execute the takeoff sequence (disarm, boxarm, takeoff), if the drone is not armed
     def takeoff(self):
         if self.is_armed():
-            # already armed => don't try to takeoff (might've already taken off)
+            # already armed => could already be in the air => don't try to takeoff again
             return
 
         self.disarm()
@@ -144,17 +149,86 @@ class Command:
         time.sleep(5)
         self.disarm()
 
+    # calibrate the accelerometer and magnetometer, if the drone is not armed
     def calib(self):
         if self.is_armed():
             return
         self.send_out_msg(ACC_CALIB)
         self.send_out_msg(MAG_CALIB)
 
+
+
+    # ------------------- Communication -------------------
+
+    # create a MSP packet using the current command
     def make_msg(self):
         if self.cmd == 0:
             return msp_set_raw_rc(self.roll, self.pitch, self.throttle, self.yaw, self.aux1, self.aux2, self.aux3, self.aux4)
         else:
             return msp_set_command(self.cmd)
+
+    # send the current command to the drone
+    # updates attitude values from the controller, if there is a controller connected
+    def send(self):
+        if self.is_armed() and self.controller is not None:
+            self.read_controller_axes()
+        self.send_out_msg(self.make_msg())
+
+    # send an OUT message to the drone, and read the response (empty acknowledgement packet)
+    # used by:
+    # - send() to send a command
+    # - calib() to calibrate the accelerometer and magnetometer
+    def send_out_msg(self, msg):
+        self.send_msg(msg)
+        self.get_msg(0)
+
+    # send a message to the drone
+    # used by:
+    # - send_out_msg() to send an OUT message
+    # - get_in_msg()   to request an IN message
+    def send_msg(self, msg):
+        # print('------')
+        # print(self.make_msg())
+        self.socket.send(msg)
+
+    # read a message with payload of size `payload_len` from the drone
+    # used by:
+    # - send_out_msg() to read the empty acknowledgement packet
+    # - get_in_msg()   to read the response to an IN message request
+    def get_msg(self, payload_len):
+        # 2 byte header
+        # 1 byte dir
+        # 1 byte cmd
+        # 1 byte length
+        # length bytes payload
+        # 1 byte crc
+        msg = self.socket.recv(6 + payload_len, socket.MSG_WAITALL)
+        return parse_out(msg)
+
+    # request a IN message from the drone, and read the response
+    # used by:
+    # - get_raw_vals() to request the raw sensor values
+    def get_in_msg(self, cmd, payload_len):
+        msg = make_in(cmd, b"")
+        self.send_msg(msg)
+        _, payload = self.get_msg(payload_len)
+        return payload
+
+    # ------------------- Controller -------------------
+
+    # the controller support is part of the Command class, but using it is optional
+    # drone can be controlled without a controller too (like in task 2)
+
+    # listeners are set up for each button, and the axes are read by polling
+
+    # attach a controller to the object
+    def add_controller(self, controller):
+        self.controller = controller
+        for button in controller.buttons:
+            button.when_pressed = lambda btn : (
+                self.button_handler(btn)
+            )
+        # axes are read by polling, not by events (see self.get_controller_axes)
 
     def button_handler(self, button):
         if button.name == "button_a":
@@ -168,60 +242,19 @@ class Command:
         elif button.name == "button_mode":
             self.calib()
         else:
-            print(button.name)
+            print("unused button pressed: " + button.name)
 
-    def axis_handler(self, axis):
-        # x and y are in [-1.0, 1.0]
-        # -axis.y because moving joystick up is negative and down is positive, and we don't want that
-        x, y = axis.x, -axis.y
-
-        if axis.name == "axis_l":
-            self.yaw = 1500 + int(x * 200)
-            self.throttle = 1550 + int(y * (200 if y > 0 else 100))
-        else:
-            # axis.name == "axis_r"
-            self.roll = 1500 + int(x * 200)
-            self.pitch = 1500 + int(y * 200)
-
-    def get_controller_axes(self):
+    # read controller axes and update values
+    def read_controller_axes(self):
+        # moving joystick up makes y negative, so -ve sign for throttle and pitch
         self.throttle = 1500 + int(self.controller.axis_l.y * -200)
         self.yaw = 1500 + int(self.controller.axis_l.x * 300)
-        self.pitch = 1500 + int(self.controller.axis_r.y * -200) # moving joystick up makes y negative
+        self.pitch = 1500 + int(self.controller.axis_r.y * -200)
         self.roll = 1500 + int(self.controller.axis_r.x * 200)
 
-    def send(self):
-        if self.is_armed() and self.controller is not None:
-            self.get_controller_axes()
-        self.send_out_msg(self.make_msg())
-
-    def send_out_msg(self, msg):
-        self.send_msg(msg)
-        self.get_msg(0)
-
-    def send_msg(self, msg):
-        # print('------')
-        # print(self.make_msg())
-        self.socket.send(msg)
-
-    def get_msg(self, payload_len):
-        # 2 byte header
-        # 1 byte dir
-        # 1 byte cmd
-        # 1 byte length
-        # length bytes payload
-        # 1 byte crc
-        print("reading")
-        msg = self.socket.recv(6 + payload_len, socket.MSG_WAITALL)
-        print("read")
-        return parse_out(msg)
-
-    def get_in_msg(self, cmd, payload_len):
-        msg = make_in(cmd, b"")
-        self.send_msg(msg)
-        _, payload = self.get_msg(payload_len)
-        return payload
-
 if __name__ == "__main__":
+    # simple test, using the controller to control the drone
+
     from xbox360controller import Xbox360Controller
     with Xbox360Controller(axis_threshold=0, raw_mode=0) as controller:
         command = Command("192.168.4.1")
@@ -239,7 +272,7 @@ if __name__ == "__main__":
                     print(command.get_raw_vals())
                     i = 0
                 i += 1
-                command.send()
+                command.send() # reads controller axes before sending
         except KeyboardInterrupt:
             try:
                 command.land()
